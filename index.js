@@ -58,7 +58,7 @@ process.on('unhandledRejection', (reason) => {
     console.error('[fatal] unhandled rejection:', reason?.stack || reason);
 });
 
-const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;
+const START_PORT = Number(process.env.SERVER_PORT || process.env.PORT || 3000);
 const SESSIONS_DIR = path.join(__dirname, 'sessions');
 const SETTINGS_DIR = path.join(__dirname, 'settings');
 fs.mkdirSync(SESSIONS_DIR, { recursive: true });
@@ -380,26 +380,35 @@ io.on('connection', (socket) => {
     });
 });
 
-server.listen(PORT, async () => {
-    console.log(chalk.hex('#6c5ce7').bold(`\n╔══════════════════════════════════════╗`));
-    console.log(chalk.hex('#6c5ce7').bold(`║   Darksite Clan Bug — Multi-Session     ║`));
-    console.log(chalk.hex('#6c5ce7').bold(`║   http://localhost:${PORT}              ║`));
-    console.log(chalk.hex('#6c5ce7').bold(`╚══════════════════════════════════════╝\n`));
-    try {
-        await loadExistingSessions();
-        const phoneNumber = String(process.env.PHONE_NUMBER || '').replace(/[^0-9]/g, '');
-        if (phoneNumber && !sessions.has(phoneNumber)) {
-            console.log(`[startup] requesting WhatsApp pairing code for ${phoneNumber}`);
-            const result = await createSession(phoneNumber, null);
-            if (!result?.success) console.error('[startup] pairing failed:', result?.error || result);
-        } else if (!phoneNumber && sessions.size === 0) {
-            console.log('[startup] ready; set PHONE_NUMBER=countrycode+number to pair from this terminal, or use the Socket.IO/API client.');
+function startServer(port) {
+    server.once('error', (err) => {
+        if (err.code === 'EADDRINUSE' && port < START_PORT + 10) {
+            console.error(`[server] port ${port} is busy; retrying on ${port + 1}`);
+            return setTimeout(() => startServer(port + 1), 100);
         }
-    } catch (err) {
-        console.error('[startup] session initialization failed:', err?.stack || err);
-    }
-});
+        console.error('[server] failed to listen:', err?.stack || err);
+        process.exitCode = 1;
+    });
 
-server.on('error', (err) => {
-    console.error('[server] failed to listen:', err?.stack || err);
-});
+    server.listen(port, async () => {
+        console.log(chalk.hex('#6c5ce7').bold(`\n╔══════════════════════════════════════╗`));
+        console.log(chalk.hex('#6c5ce7').bold(`║   Darksite Clan Bug — Multi-Session     ║`));
+        console.log(chalk.hex('#6c5ce7').bold(`║   http://localhost:${port}              ║`));
+        console.log(chalk.hex('#6c5ce7').bold(`╚══════════════════════════════════════╝\n`));
+        try {
+            await loadExistingSessions();
+            const phoneNumber = String(process.env.PHONE_NUMBER || '').replace(/[^0-9]/g, '');
+            if (phoneNumber && !sessions.has(phoneNumber)) {
+                console.log(`[startup] requesting WhatsApp pairing code for ${phoneNumber}`);
+                const result = await createSession(phoneNumber, null);
+                if (!result?.success) console.error('[startup] pairing failed:', result?.error || result);
+            } else if (!phoneNumber && sessions.size === 0) {
+                console.log('[startup] ready; set PHONE_NUMBER=countrycode+number to pair from this terminal, or use the Socket.IO/API client.');
+            }
+        } catch (err) {
+            console.error('[startup] session initialization failed:', err?.stack || err);
+        }
+    });
+}
+
+startServer(START_PORT);
