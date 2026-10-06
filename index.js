@@ -2,6 +2,9 @@ console.clear();
 
 const util = require('util');
 const NOISY_CONSOLE_PATTERNS = [
+    'Baileys modified by',
+    'XzC_Information',
+    'PRIMIS BAILEYS',
     'Connection Closed',
     'Cannot derive from empty media key',
     'rate-overlimit',
@@ -25,6 +28,8 @@ function isNoisyLog(args) {
         original(...args);
     };
 });
+
+console.log(`[startup] DARKSITE CLAN BUG entrypoint: ${__dirname}/index.js`);
 
 const express = require('express');
 const http = require('http');
