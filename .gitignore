@@ -1,0 +1,6 @@
+node_modules/
+sessions/
+settings/
+m/
+.env
+npm-debug.log*

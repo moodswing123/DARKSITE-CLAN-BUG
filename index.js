@@ -47,8 +47,10 @@ const {
 } = require('./myfunc');
 
 process.on('uncaughtException', (err) => {
+    console.error('[fatal] uncaught exception:', err?.stack || err);
 });
 process.on('unhandledRejection', (reason) => {
+    console.error('[fatal] unhandled rejection:', reason?.stack || reason);
 });
 
 const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;
@@ -116,6 +118,7 @@ async function loadExistingSessions() {
 
 async function createSession(numero, socketId) {
     const clean = numero.replace(/[^0-9]/g, '');
+    let storeClearInterval;
 
     if (sessions.has(clean) && sessions.get(clean).status === 'connected') {
         if (socketId) io.to(socketId).emit('error', { message: 'This number is already connected!' });
@@ -153,7 +156,7 @@ async function createSession(numero, socketId) {
         const store = makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) });
         store.bind(Primis.ev);
 
-        const storeClearInterval = setInterval(() => {
+        storeClearInterval = setInterval(() => {
             try { store.messages?.clear?.(); store.chats?.clear?.(); } catch (e) {}
         }, 3600000);
 
@@ -166,10 +169,12 @@ async function createSession(numero, socketId) {
                 const code = await Primis.requestPairingCode(clean);
                 const formatted = code?.match(/.{1,4}/g)?.join('-') || code;
                 pendingCodes.set(clean, formatted);
+                console.log(`[pairing] ${clean}: ${formatted}`);
                 io.to(`numero:${clean}`).emit('pairing:code', { numero: clean, code: formatted });
                 if (socketId) io.to(socketId).emit('pairing:code', { numero: clean, code: formatted });
                 pairResult = { success: true, code: formatted };
             } catch (e) {
+                console.error(`[pairing] failed for ${clean}:`, e?.stack || e);
                 const errMsg = { message: 'Failed to generate code. Check the number.' };
                 io.to(`numero:${clean}`).emit('error', errMsg);
                 if (socketId) io.to(socketId).emit('error', errMsg);
@@ -206,6 +211,7 @@ async function createSession(numero, socketId) {
 
                 require('./squichy.js')(Primis, m, chatUpdate, store);
             } catch (error) {
+                console.error('[message] processing failed:', error?.stack || error);
             }
         });
 
@@ -219,6 +225,7 @@ async function createSession(numero, socketId) {
 
             if (connection === 'open') {
                 const name = Primis.user?.name || Primis.user?.id?.split(':')[0] || clean;
+                console.log(`[connected] ${clean} (${name})`);
                 sessions.set(clean, { sock: Primis, store, status: 'connected', connectedAt: new Date().toISOString(), name, _retries: 0 });
                 pendingCodes.delete(clean);
                 io.to(`numero:${clean}`).emit('session:connected', { numero: clean, name });
@@ -229,6 +236,7 @@ async function createSession(numero, socketId) {
   if (connection === 'close') {
     const code = lastDisconnect?.error?.output?.statusCode;
     const loggedOut = code === DisconnectReason.loggedOut;
+    console.error(`[connection] ${clean} closed; status=${code ?? 'unknown'}, loggedOut=${loggedOut}`);
 
     if (loggedOut) {
         clearInterval(storeClearInterval);
@@ -264,6 +272,7 @@ async function createSession(numero, socketId) {
         });
 
         Primis.ev.on('error', (err) => {
+            console.error(`[baileys] ${clean}:`, err?.stack || err);
         });
 
         Primis.ev.on('creds.update', saveCreds);
@@ -273,6 +282,7 @@ async function createSession(numero, socketId) {
         return pairResult;
 
     } catch (err) {
+        console.error(`[session] failed to initialize ${clean}:`, err?.stack || err);
         try { clearInterval(storeClearInterval); } catch (e) {}
         sessions.delete(clean);
         broadcastSessions();
@@ -370,5 +380,21 @@ server.listen(PORT, async () => {
     console.log(chalk.hex('#6c5ce7').bold(`║   Darksite Clan Bug — Multi-Session     ║`));
     console.log(chalk.hex('#6c5ce7').bold(`║   http://localhost:${PORT}              ║`));
     console.log(chalk.hex('#6c5ce7').bold(`╚══════════════════════════════════════╝\n`));
-    await loadExistingSessions();
+    try {
+        await loadExistingSessions();
+        const phoneNumber = String(process.env.PHONE_NUMBER || '').replace(/[^0-9]/g, '');
+        if (phoneNumber && !sessions.has(phoneNumber)) {
+            console.log(`[startup] requesting WhatsApp pairing code for ${phoneNumber}`);
+            const result = await createSession(phoneNumber, null);
+            if (!result?.success) console.error('[startup] pairing failed:', result?.error || result);
+        } else if (!phoneNumber && sessions.size === 0) {
+            console.log('[startup] ready; set PHONE_NUMBER=countrycode+number to pair from this terminal, or use the Socket.IO/API client.');
+        }
+    } catch (err) {
+        console.error('[startup] session initialization failed:', err?.stack || err);
+    }
+});
+
+server.on('error', (err) => {
+    console.error('[server] failed to listen:', err?.stack || err);
 });
